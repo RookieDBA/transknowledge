@@ -1,0 +1,42 @@
+api:
+  deepseek:
+    model: "deepseek-chat"
+    max_tokens: 4096
+    temperature: 0.3
+    timeout: 60
+    max_retries: 3
+    base_url: "https://api.deepseek.com"
+
+obsidian:
+  vault_path: "/path/to/your/obsidian/vault"
+  articles_folder: "Articles/Translations"
+  attachments_folder: "Attachments"
+  filename_template: "{date}_{title}"
+  add_frontmatter: true
+
+translation:
+  source_language: "English"
+  target_language: "Chinese"
+  preserve_code_blocks: true
+  preserve_links: true
+  chunk_size: 3000
+
+images:
+  download_enabled: true
+  max_size_mb: 10
+  allowed_formats: ["jpg", "jpeg", "png", "gif", "webp", "svg"]
+  timeout: 30
+  filename_prefix: "img"
+  use_obsidian_embeds: true
+
+logging:
+  level: "INFO"
+  log_file: "logs/app.log"
+  max_file_size: "10MB"
+  backup_count: 5
+
+scraper:
+  user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+  timeout: 30
+  verify_ssl: true
+  max_redirects: 5
