@@ -1,6 +1,6 @@
 # TransKnowladge - 文章翻译Agent
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/yourusername/transknowladge)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/RookieDBA/transknowledge)
 [![Python](https://img.shields.io/badge/python-3.9+-green.svg)](https://www.python.org/)
 [![Tests](https://img.shields.io/badge/tests-65%20passed-brightgreen.svg)](./TEST_SUMMARY.md)
 [![Coverage](https://img.shields.io/badge/coverage-63%25-yellow.svg)](./TEST_SUMMARY.md)
@@ -41,8 +41,8 @@ JSON 输出 + Obsidian 文件
 ### 1. 克隆项目
 
 ```bash
-git clone https://github.com/yourusername/transknowladge.git
-cd transknowladge
+git clone https://github.com/RookieDBA/transknowledge.git
+cd transknowledge
 ```
 
 ### 2. 安装依赖
@@ -164,7 +164,7 @@ tags:
 ## 📁 项目结构
 
 ```
-transknowladge/
+transknowledge/
 ├── src/
 │   ├── __main__.py          # CLI 入口
 │   ├── cli.py               # 命令行接口
@@ -444,4 +444,4 @@ flake8 src/ tests/
 
 ---
 
-**如有问题或建议,欢迎提交 [Issue](https://github.com/yourusername/transknowladge/issues)!**
+**如有问题或建议,欢迎提交 [Issue](https://github.com/RookieDBA/transknowledge/issues)!**
