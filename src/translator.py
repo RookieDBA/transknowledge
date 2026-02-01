@@ -251,18 +251,27 @@ class DeepSeekTranslator:
             placeholders[placeholder] = match.group(0)
             return placeholder
 
-        # 保护代码块 ```...```
+        # 保护代码块 ```...``` (包括带语言标识的)
+        text = re.sub(r'```[a-zA-Z]*\n[\s\S]*?```', create_placeholder, text)
         text = re.sub(r'```[\s\S]*?```', create_placeholder, text)
 
         # 保护行内代码 `...`
-        text = re.sub(r'`[^`]+`', create_placeholder, text)
+        text = re.sub(r'`[^`\n]+`', create_placeholder, text)
 
-        # 保护URL
-        text = re.sub(r'https?://[^\s\)]+', create_placeholder, text)
+        # 保护Markdown表格 (整个表格块)
+        # 匹配以 | 开头的连续行，包括表头分隔行
+        table_pattern = r'(?:^\|[^\n]+\|[ ]*\n)+(?:^\|[-:\| ]+\|[ ]*\n)(?:^\|[^\n]+\|[ ]*\n?)+'
+        text = re.sub(table_pattern, create_placeholder, text, flags=re.MULTILINE)
 
-        # 保护图片引用 ![...](...) 和 ![[...]]
+        # 保护图片引用 ![...](...) 和 ![[...]] (在URL之前，避免嵌套)
         text = re.sub(r'!\[([^\]]*)\]\([^\)]+\)', create_placeholder, text)
         text = re.sub(r'!\[\[([^\]]+)\]\]', create_placeholder, text)
+
+        # 保护普通链接 [text](url) (在URL之前，避免嵌套)
+        text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', create_placeholder, text)
+
+        # 保护独立的URL (不在链接内的)
+        text = re.sub(r'https?://[^\s\)\]]+', create_placeholder, text)
 
         return text, placeholders
 

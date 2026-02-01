@@ -2,6 +2,7 @@
 网页抓取模块
 负责从URL抓取文章内容,提取正文、元数据和图片
 """
+import re
 import requests
 import html2text
 from bs4 import BeautifulSoup
@@ -38,6 +39,7 @@ class ArticleScraper:
         self.h2t.ignore_emphasis = False
         self.h2t.body_width = 0  # 不自动换行
         self.h2t.single_line_break = False
+        self.h2t.bypass_tables = False  # 启用表格转换为Markdown格式
 
     @retry(
         stop=stop_after_attempt(3),
@@ -138,12 +140,199 @@ class ArticleScraper:
             Markdown内容
         """
         logger.info("Converting HTML to Markdown")
+
+        # 预处理HTML：为代码块添加语言标识
+        html = self._preprocess_code_blocks(html)
+
         markdown = self.h2t.handle(html)
+
+        # 后处理：修复代码块和表格格式
+        markdown = self._postprocess_markdown(markdown)
 
         # 清理多余的空行
         markdown = '\n'.join(line for line in markdown.split('\n') if line.strip() or line == '')
 
         return markdown
+
+    def _preprocess_code_blocks(self, html: str) -> str:
+        """
+        预处理HTML中的代码块，确保正确转换
+
+        Args:
+            html: HTML内容
+
+        Returns:
+            处理后的HTML
+        """
+        soup = BeautifulSoup(html, 'lxml')
+
+        # 处理 <pre> 标签中的代码
+        for pre in soup.find_all('pre'):
+            # 检查是否有 <code> 子标签
+            code = pre.find('code')
+            if code:
+                # 尝试从 class 属性获取语言
+                lang = ''
+                code_class = code.get('class', [])
+                if code_class:
+                    for cls in code_class:
+                        if cls.startswith('language-'):
+                            lang = cls.replace('language-', '')
+                            break
+                        elif cls.startswith('lang-'):
+                            lang = cls.replace('lang-', '')
+                            break
+
+                # 获取代码内容
+                code_text = code.get_text()
+
+                # 创建新的结构，使用特殊标记
+                pre.clear()
+                pre['data-lang'] = lang
+                pre.string = code_text
+            else:
+                # 没有 code 子标签，直接处理 pre
+                pre_class = pre.get('class', [])
+                lang = ''
+                if pre_class:
+                    for cls in pre_class:
+                        if cls.startswith('language-'):
+                            lang = cls.replace('language-', '')
+                            break
+                pre['data-lang'] = lang
+
+        return str(soup)
+
+    def _postprocess_markdown(self, markdown: str) -> str:
+        """
+        后处理Markdown，修复代码块和表格格式
+
+        Args:
+            markdown: 原始Markdown
+
+        Returns:
+            修复后的Markdown
+        """
+        # 修复缩进的代码块（4空格缩进）转换为围栏代码块
+        # 匹配连续的缩进行（4空格或1个tab开头）
+        lines = markdown.split('\n')
+        result_lines = []
+        in_code_block = False
+        code_block_lines = []
+
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+
+            # 检测缩进代码块（4空格开头，且不是列表项的续行）
+            is_indented_code = (line.startswith('    ') and
+                               not line.strip().startswith('-') and
+                               not line.strip().startswith('*') and
+                               not line.strip().startswith('+') and
+                               not (i > 0 and result_lines and
+                                    (result_lines[-1].strip().startswith('-') or
+                                     result_lines[-1].strip().startswith('*') or
+                                     result_lines[-1].strip().startswith('1.'))))
+
+            if is_indented_code:
+                if not in_code_block:
+                    in_code_block = True
+                    code_block_lines = []
+                # 移除4空格缩进
+                code_block_lines.append(line[4:] if line.startswith('    ') else line)
+            else:
+                if in_code_block:
+                    # 结束代码块
+                    in_code_block = False
+                    # 检测代码语言
+                    lang = self._detect_code_language('\n'.join(code_block_lines))
+                    result_lines.append(f'```{lang}')
+                    result_lines.extend(code_block_lines)
+                    result_lines.append('```')
+                    result_lines.append('')
+
+                result_lines.append(line)
+
+            i += 1
+
+        # 处理文件末尾的代码块
+        if in_code_block:
+            lang = self._detect_code_language('\n'.join(code_block_lines))
+            result_lines.append(f'```{lang}')
+            result_lines.extend(code_block_lines)
+            result_lines.append('```')
+
+        markdown = '\n'.join(result_lines)
+
+        # 修复表格格式：确保表格行之间没有多余空格
+        markdown = self._fix_table_format(markdown)
+
+        return markdown
+
+    def _detect_code_language(self, code: str) -> str:
+        """
+        根据代码内容检测编程语言
+
+        Args:
+            code: 代码内容
+
+        Returns:
+            语言标识符
+        """
+        code_stripped = code.strip()
+
+        # JSON 检测
+        if code_stripped.startswith('{') and code_stripped.endswith('}'):
+            try:
+                import json
+                json.loads(code_stripped)
+                return 'json'
+            except:
+                pass
+
+        # Python 检测
+        if re.search(r'\bdef\s+\w+\s*\(', code) or re.search(r'\bimport\s+\w+', code):
+            return 'python'
+
+        # JavaScript 检测
+        if re.search(r'\bfunction\s+\w+\s*\(', code) or re.search(r'\bconst\s+\w+\s*=', code):
+            return 'javascript'
+
+        # Bash/Shell 检测
+        if code_stripped.startswith('#!') or re.search(r'\b(echo|cd|ls|pwd|git)\s+', code):
+            return 'bash'
+
+        # HTML 检测
+        if re.search(r'<\w+[^>]*>', code) and re.search(r'</\w+>', code):
+            return 'html'
+
+        return ''
+
+    def _fix_table_format(self, markdown: str) -> str:
+        """
+        修复Markdown表格格式
+
+        Args:
+            markdown: Markdown内容
+
+        Returns:
+            修复后的Markdown
+        """
+        lines = markdown.split('\n')
+        result_lines = []
+
+        for i, line in enumerate(lines):
+            # 检测表格行（以 | 开头或包含 | 分隔符）
+            if '|' in line and line.strip().startswith('|'):
+                # 移除行尾多余空格
+                line = line.rstrip()
+                # 确保表格行格式正确
+                if not line.endswith('|'):
+                    line = line + '|'
+
+            result_lines.append(line)
+
+        return '\n'.join(result_lines)
 
     def extract_images(self, html: str, base_url: str) -> List[str]:
         """

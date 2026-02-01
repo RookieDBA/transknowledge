@@ -1,6 +1,6 @@
-# TransKnowladge - 文章翻译Agent
+# TransKnowledge - 文章翻译Agent
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/RookieDBA/transknowledge)
+[![Version](https://img.shields.io/badge/version-1.0.1-blue.svg)](https://github.com/RookieDBA/transknowledge)
 [![Python](https://img.shields.io/badge/python-3.9+-green.svg)](https://www.python.org/)
 [![Tests](https://img.shields.io/badge/tests-65%20passed-brightgreen.svg)](./TEST_SUMMARY.md)
 [![Coverage](https://img.shields.io/badge/coverage-63%25-yellow.svg)](./TEST_SUMMARY.md)
@@ -15,6 +15,7 @@
 - 🖼️ **图片处理**: 自动下载图片并转换为Obsidian格式引用 `![[Attachments/img.png]]`
 - 📝 **格式保留**: 完美保持Markdown格式,包括代码块、链接、表格等
 - 📚 **Obsidian集成**: 直接保存到Obsidian vault,支持frontmatter元数据
+- 🔌 **Claude Code集成**: 支持通过Obsidian Skills与Claude Code协作
 - ✅ **完整测试**: 65个测试用例,核心模块覆盖率90%+
 
 ## 🏗️ 架构设计
@@ -89,7 +90,11 @@ obsidian:
 
 ## 🚀 使用方法
 
-### 命令行使用
+本项目提供两种保存到Obsidian的方式:
+
+### 方式一: 命令行工具 (自动化,推荐)
+
+使用Python CLI工具自动完成翻译、图片下载和保存:
 
 ```bash
 # 翻译并自动保存到 Obsidian
@@ -107,6 +112,53 @@ python -m src https://example.com/article --save --filename my-article.md
 # 查看所有选项
 python -m src --help
 ```
+
+### 方式二: Claude Code + Obsidian Skills (灵活)
+
+通过Claude Code配合Obsidian Skills手动创建和编辑笔记,适合需要更多自定义的场景。
+
+#### 安装 Obsidian Skills
+
+```bash
+# 克隆 obsidian-skills 仓库
+git clone https://github.com/kepano/obsidian-skills.git /tmp/obsidian-skills
+
+# 复制 skills 到 Claude Code 配置目录
+mkdir -p ~/.claude/skills
+cp -r /tmp/obsidian-skills/skills/* ~/.claude/skills/
+```
+
+安装后包含以下技能:
+- **obsidian-markdown**: 创建和编辑 Obsidian Flavored Markdown
+- **obsidian-bases**: 处理 Obsidian Bases 文件
+- **json-canvas**: 处理 JSON Canvas 文件
+
+#### 使用方式
+
+在Claude Code中,你可以直接请求创建Obsidian笔记:
+
+```
+帮我在 Obsidian vault 中创建一个笔记,标题是"xxx",内容是"xxx"
+```
+
+Claude Code会使用obsidian-markdown skill来创建符合Obsidian格式的笔记,包括:
+- 正确的 frontmatter 属性
+- Wikilinks `[[]]` 格式
+- Callouts `> [!note]`
+- 嵌入 `![[image.png]]`
+
+### 两种方式对比
+
+| 特性 | 命令行工具 | Claude Code + Skills |
+|------|-----------|---------------------|
+| 自动翻译 | ✅ | ❌ (需手动提供内容) |
+| 自动下载图片 | ✅ | ❌ |
+| 批量处理 | ✅ | ❌ |
+| 灵活编辑 | ❌ | ✅ |
+| 交互式操作 | ❌ | ✅ |
+| 自定义格式 | 有限 | 完全自定义 |
+
+**推荐工作流**: 使用命令行工具翻译文章并保存,如需手动调整或创建额外笔记,使用Claude Code + Obsidian Skills。
 
 ### 输出示例
 
@@ -429,13 +481,14 @@ flake8 src/ tests/
 
 - [DeepSeek](https://www.deepseek.com/) - 提供高质量的AI翻译引擎
 - [Obsidian](https://obsidian.md/) - 优秀的知识管理工具
+- [Obsidian Skills](https://github.com/kepano/obsidian-skills) - Claude Code的Obsidian技能库
 - [Readability](https://github.com/buriy/python-readability) - 智能文章提取
 - [html2text](https://github.com/Alir3z4/html2text) - HTML到Markdown转换
 - [Loguru](https://github.com/Delgan/loguru) - 优雅的日志库
 
 ## 📊 项目状态
 
-- **版本**: v1.0.0
+- **版本**: v1.0.1
 - **状态**: 稳定版本
 - **Python**: 3.9+
 - **测试**: 65个测试全部通过
