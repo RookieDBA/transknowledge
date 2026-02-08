@@ -93,9 +93,14 @@ class DeepSeekTranslator:
 1. 保持原文的Markdown格式,包括标题、列表、代码块、链接等
 2. 代码块内的代码不要翻译,保持原样
 3. URL和链接不要翻译
-4. 专业术语保持原文或加上中文注释
-5. 翻译要准确、流畅、符合中文表达习惯
-6. 只返回翻译后的内容,不要添加任何解释
+4. 翻译要准确、流畅、符合中文表达习惯
+5. 只返回翻译后的内容,不要添加任何解释
+
+以下AI/大模型领域的专有名词请保持英文原文,不要翻译:
+- 模型名称: Claude, GPT, Gemini, LLaMA, Mistral, DeepSeek, Opus, Sonnet, Haiku 等
+- 技术术语: Transformer, Attention, Token, Embedding, Fine-tuning, RLHF, RAG, Chain-of-Thought, Few-shot, Zero-shot, In-context Learning, Prompt, Agent, MCP, Tool Use 等
+- 产品/框架名称: LangChain, LlamaIndex, Hugging Face, OpenAI, Anthropic, Claude Code, Claude Agent SDK 等
+- 通用技术词汇: API, SDK, JSON, Markdown, Git, GitHub 等
 
 原文:
 {text}
@@ -279,6 +284,9 @@ class DeepSeekTranslator:
         """
         恢复保护的Markdown元素
 
+        按照占位符编号的降序恢复，确保嵌套的占位符正确恢复
+        例如：__PLACEHOLDER_2__ 包含 __PLACEHOLDER_1__，需要先恢复 2 再恢复 1
+
         Args:
             text: 处理后的文本
             placeholders: 占位符映射
@@ -286,7 +294,14 @@ class DeepSeekTranslator:
         Returns:
             恢复后的文本
         """
-        for placeholder, original in placeholders.items():
+        # 按占位符编号降序排序，确保先恢复外层的占位符
+        sorted_placeholders = sorted(
+            placeholders.items(),
+            key=lambda x: int(re.search(r'__PLACEHOLDER_(\d+)__', x[0]).group(1)),
+            reverse=True
+        )
+
+        for placeholder, original in sorted_placeholders:
             text = text.replace(placeholder, original)
 
         return text

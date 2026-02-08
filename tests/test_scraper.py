@@ -168,3 +168,114 @@ class TestArticleScraper:
         assert 'image_urls' in result
         assert result['title'] == 'Test'
         assert len(result['image_urls']) == 1
+
+    @pytest.mark.unit
+    def test_should_use_dynamic_by_domain_enabled(self, mock_config):
+        """测试域名匹配触发动态渲染"""
+        mock_config['scraper']['dynamic_render'] = {
+            'enabled': True,
+            'domains': ['huggingface.co', 'gradio.app'],
+            'min_content_length': 500
+        }
+        scraper = ArticleScraper(mock_config)
+
+        # 模拟 Playwright 可用
+        import src.scraper as scraper_module
+        original_available = scraper_module.PLAYWRIGHT_AVAILABLE
+        scraper_module.PLAYWRIGHT_AVAILABLE = True
+
+        try:
+            assert scraper._should_use_dynamic_by_domain("https://huggingface.co/spaces/test") is True
+            assert scraper._should_use_dynamic_by_domain("https://www.gradio.app/demo") is True
+            assert scraper._should_use_dynamic_by_domain("https://example.com/article") is False
+        finally:
+            scraper_module.PLAYWRIGHT_AVAILABLE = original_available
+
+    @pytest.mark.unit
+    def test_should_use_dynamic_by_domain_disabled(self, mock_config):
+        """测试动态渲染禁用时不触发"""
+        mock_config['scraper']['dynamic_render'] = {
+            'enabled': False,
+            'domains': ['huggingface.co'],
+            'min_content_length': 500
+        }
+        scraper = ArticleScraper(mock_config)
+
+        assert scraper._should_use_dynamic_by_domain("https://huggingface.co/spaces/test") is False
+
+    @pytest.mark.unit
+    def test_needs_dynamic_fallback_short_content(self, mock_config):
+        """测试内容过短时触发动态回退"""
+        mock_config['scraper']['dynamic_render'] = {
+            'enabled': True,
+            'domains': [],
+            'min_content_length': 500
+        }
+        scraper = ArticleScraper(mock_config)
+
+        # 模拟 Playwright 可用
+        import src.scraper as scraper_module
+        original_available = scraper_module.PLAYWRIGHT_AVAILABLE
+        scraper_module.PLAYWRIGHT_AVAILABLE = True
+
+        try:
+            # 短内容应该触发回退
+            short_html = "<html><body><p>Short</p></body></html>"
+            assert scraper._needs_dynamic_fallback(short_html) is True
+
+            # 长内容不应该触发回退
+            long_content = "x" * 1000
+            long_html = f"<html><body><article><p>{long_content}</p></article></body></html>"
+            assert scraper._needs_dynamic_fallback(long_html) is False
+        finally:
+            scraper_module.PLAYWRIGHT_AVAILABLE = original_available
+
+    @pytest.mark.unit
+    def test_get_content_length(self, scraper):
+        """测试内容长度计算"""
+        html = "<html><body><article><p>Hello World</p></article></body></html>"
+        length = scraper._get_content_length(html)
+        assert length > 0
+
+    @pytest.mark.unit
+    def test_get_content_length_empty(self, scraper):
+        """测试空内容长度计算"""
+        html = "<html><body></body></html>"
+        length = scraper._get_content_length(html)
+        assert length == 0
+
+    @pytest.mark.unit
+    @patch('src.scraper.requests.get')
+    def test_fetch_static_success(self, mock_get, scraper):
+        """测试静态抓取成功"""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.text = "<html><body>Test Content</body></html>"
+        mock_response.apparent_encoding = 'utf-8'
+        mock_get.return_value = mock_response
+
+        result = scraper._fetch_static("https://example.com")
+
+        assert result == "<html><body>Test Content</body></html>"
+        mock_get.assert_called_once()
+
+    @pytest.mark.unit
+    def test_fetch_dynamic_not_available(self, mock_config):
+        """测试 Playwright 未安装时抛出错误"""
+        mock_config['scraper']['dynamic_render'] = {
+            'enabled': True,
+            'domains': [],
+            'min_content_length': 500
+        }
+        scraper = ArticleScraper(mock_config)
+
+        # 模拟 Playwright 不可用
+        import src.scraper as scraper_module
+        original_available = scraper_module.PLAYWRIGHT_AVAILABLE
+        scraper_module.PLAYWRIGHT_AVAILABLE = False
+
+        try:
+            with pytest.raises(RuntimeError, match="Playwright is not installed"):
+                scraper._fetch_dynamic("https://example.com")
+        finally:
+            scraper_module.PLAYWRIGHT_AVAILABLE = original_available

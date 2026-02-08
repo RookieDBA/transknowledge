@@ -116,8 +116,18 @@ class ImageHandler:
                 'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7',
                 'Accept-Encoding': 'gzip, deflate, br',
                 'Connection': 'keep-alive',
-                'Referer': url.rsplit('/', 1)[0] + '/',
+                'Sec-Fetch-Dest': 'image',
+                'Sec-Fetch-Mode': 'no-cors',
+                'Sec-Fetch-Site': 'same-origin',
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache',
             }
+
+            # 添加 Referer（使用图片URL的域名）
+            from urllib.parse import urlparse
+            parsed_url = urlparse(url)
+            referer = f"{parsed_url.scheme}://{parsed_url.netloc}/"
+            headers['Referer'] = referer
             response = session.get(url, headers=headers, timeout=self.timeout, stream=True, verify=True)
             response.raise_for_status()
 

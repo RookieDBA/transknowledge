@@ -40,3 +40,11 @@ scraper:
   timeout: 30
   verify_ssl: true
   max_redirects: 5
+
+  # 动态渲染配置 (用于 JavaScript 动态加载的页面)
+  dynamic_render:
+    enabled: true
+    # 等待页面加载的超时时间(秒)
+    timeout: 30
+    # 内容最小长度阈值，低于此值自动尝试动态渲染
+    min_content_length: 500

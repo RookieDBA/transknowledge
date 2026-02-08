@@ -43,6 +43,17 @@ def mock_config():
             'max_size_mb': 10,
             'timeout': 30,
             'use_obsidian_embeds': True
+        },
+        'scraper': {
+            'user_agent': 'Mozilla/5.0 (Test)',
+            'timeout': 30,
+            'verify_ssl': True,
+            'dynamic_render': {
+                'enabled': False,  # 默认禁用以避免测试中触发动态渲染
+                'domains': [],
+                'timeout': 30,
+                'min_content_length': 500
+            }
         }
     }
 
