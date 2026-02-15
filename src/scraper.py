@@ -1,6 +1,7 @@
 """
 网页抓取模块
 负责从URL抓取文章内容,提取正文、元数据和图片
+支持静态HTML和JavaScript动态渲染页面
 """
 import re
 import requests
@@ -11,6 +12,14 @@ from typing import Dict, List, Optional
 from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential
 from urllib.parse import urljoin, urlparse
+
+# Playwright 用于动态渲染，延迟导入以避免未安装时报错
+PLAYWRIGHT_AVAILABLE = False
+try:
+    from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    pass
 
 
 class ArticleScraper:
@@ -32,6 +41,12 @@ class ArticleScraper:
         self.timeout = self.scraper_config.get('timeout', 30)
         self.verify_ssl = self.scraper_config.get('verify_ssl', True)
 
+        # 动态渲染配置
+        self.dynamic_config = self.scraper_config.get('dynamic_render', {})
+        self.dynamic_enabled = self.dynamic_config.get('enabled', True)
+        self.dynamic_timeout = self.dynamic_config.get('timeout', 30)
+        self.min_content_length = self.dynamic_config.get('min_content_length', 500)
+
         # 配置html2text
         self.h2t = html2text.HTML2Text()
         self.h2t.ignore_links = False
@@ -45,20 +60,44 @@ class ArticleScraper:
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10)
     )
-    def fetch_url(self, url: str) -> str:
+    def fetch_url(self, url: str) -> tuple[str, str]:
         """
-        获取URL内容
+        获取URL内容，自动选择静态或动态抓取方式
+
+        Args:
+            url: 目标URL
+
+        Returns:
+            (HTML内容, 实际的base_url) - base_url可能是iframe的URL
+
+        Raises:
+            requests.RequestException: 请求失败
+        """
+        # 先尝试静态抓取
+        html = self._fetch_static(url)
+
+        # 检查内容是否足够，不足则尝试动态渲染
+        if self._needs_dynamic_fallback(html):
+            logger.info(f"Content too short ({self._get_content_length(html)} chars), trying dynamic render")
+            try:
+                html, actual_base_url = self._fetch_dynamic(url)
+                return html, actual_base_url
+            except Exception as e:
+                logger.warning(f"Dynamic render failed: {e}, using static content")
+
+        return html, url
+
+    def _fetch_static(self, url: str) -> str:
+        """
+        静态抓取URL内容
 
         Args:
             url: 目标URL
 
         Returns:
             HTML内容
-
-        Raises:
-            requests.RequestException: 请求失败
         """
-        logger.info(f"Fetching URL: {url}")
+        logger.info(f"Fetching URL (static): {url}")
 
         headers = {
             'User-Agent': self.user_agent,
@@ -83,6 +122,142 @@ class ArticleScraper:
         except requests.RequestException as e:
             logger.error(f"Failed to fetch URL {url}: {e}")
             raise
+
+    def _fetch_dynamic(self, url: str) -> tuple[str, str]:
+        """
+        使用 Playwright 动态抓取URL内容
+
+        Args:
+            url: 目标URL
+
+        Returns:
+            (HTML内容, 实际的base_url) - base_url可能是iframe的URL
+
+        Raises:
+            RuntimeError: Playwright 未安装
+        """
+        if not PLAYWRIGHT_AVAILABLE:
+            raise RuntimeError(
+                "Playwright is not installed. "
+                "Run 'pip install playwright && playwright install chromium' to enable dynamic rendering."
+            )
+
+        logger.info(f"Fetching URL (dynamic): {url}")
+
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True)
+                context = browser.new_context(
+                    user_agent=self.user_agent,
+                    viewport={'width': 1920, 'height': 1080}
+                )
+                page = context.new_page()
+
+                # 导航到页面，等待网络空闲
+                page.goto(url, wait_until='networkidle', timeout=self.dynamic_timeout * 1000)
+
+                # 额外等待以确保动态内容加载完成
+                page.wait_for_timeout(2000)
+
+                # 获取渲染后的HTML
+                html = page.content()
+                actual_base_url = url
+
+                # 检查是否有 iframe 包含主要内容（如 HuggingFace Spaces）
+                iframe_result = self._extract_iframe_content(page, url)
+                if iframe_result:
+                    html, actual_base_url = iframe_result
+
+                browser.close()
+
+                logger.info(f"Successfully fetched URL (dynamic): {url}")
+                if actual_base_url != url:
+                    logger.info(f"Using iframe base URL: {actual_base_url}")
+
+                return html, actual_base_url
+
+        except PlaywrightTimeout as e:
+            logger.error(f"Timeout while fetching {url} dynamically: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to fetch URL {url} dynamically: {e}")
+            raise
+
+    def _extract_iframe_content(self, page, base_url: str) -> Optional[tuple[str, str]]:
+        """
+        提取页面中 iframe 的内容（用于 HuggingFace Spaces 等嵌入式页面）
+
+        Args:
+            page: Playwright page 对象
+            base_url: 基础URL
+
+        Returns:
+            (iframe内容的HTML, iframe的URL) 如果没有找到则返回 None
+        """
+        try:
+            # 查找可能包含主要内容的 iframe
+            frames = page.frames
+            if len(frames) <= 1:
+                return None
+
+            # 遍历 iframe，查找包含实际内容的 frame
+            for frame in frames[1:]:  # 跳过主 frame
+                frame_url = frame.url
+                if not frame_url or frame_url == 'about:blank':
+                    continue
+
+                # 检查是否是 HuggingFace Space 的内容 iframe
+                if '.hf.space' in frame_url or 'static.hf.space' in frame_url:
+                    logger.info(f"Found HuggingFace Space iframe: {frame_url}")
+                    try:
+                        # 等待 iframe 内容加载
+                        frame.wait_for_load_state('networkidle', timeout=10000)
+                        iframe_html = frame.content()
+                        # 检查内容是否有效
+                        if len(iframe_html) > 500:
+                            return iframe_html, frame_url
+                    except Exception as e:
+                        logger.warning(f"Failed to extract iframe content: {e}")
+                        continue
+
+            return None
+        except Exception as e:
+            logger.warning(f"Error extracting iframe content: {e}")
+            return None
+
+    def _needs_dynamic_fallback(self, html: str) -> bool:
+        """
+        检查静态抓取的内容是否需要回退到动态渲染
+
+        Args:
+            html: 静态抓取的HTML内容
+
+        Returns:
+            是否需要动态渲染
+        """
+        if not self.dynamic_enabled or not PLAYWRIGHT_AVAILABLE:
+            return False
+
+        content_length = self._get_content_length(html)
+        return content_length < self.min_content_length
+
+    def _get_content_length(self, html: str) -> int:
+        """
+        获取HTML中正文内容的长度
+
+        Args:
+            html: HTML内容
+
+        Returns:
+            正文文本长度
+        """
+        try:
+            doc = Document(html)
+            content = doc.summary()
+            soup = BeautifulSoup(content, 'lxml')
+            return len(soup.get_text(strip=True))
+        except Exception:
+            return 0
 
     def extract_article(self, html: str, base_url: Optional[str] = None) -> Dict:
         """
@@ -129,17 +304,22 @@ class ArticleScraper:
             'description': description,
         }
 
-    def convert_to_markdown(self, html: str) -> str:
+    def convert_to_markdown(self, html: str, base_url: Optional[str] = None) -> str:
         """
         将HTML转换为Markdown
 
         Args:
             html: HTML内容
+            base_url: 基础URL，用于将相对路径转换为绝对URL
 
         Returns:
             Markdown内容
         """
         logger.info("Converting HTML to Markdown")
+
+        # 预处理HTML：将图片相对路径转换为绝对URL
+        if base_url:
+            html = self._convert_relative_image_urls(html, base_url)
 
         # 预处理HTML：为代码块添加语言标识
         html = self._preprocess_code_blocks(html)
@@ -153,6 +333,32 @@ class ArticleScraper:
         markdown = '\n'.join(line for line in markdown.split('\n') if line.strip() or line == '')
 
         return markdown
+
+    def _convert_relative_image_urls(self, html: str, base_url: str) -> str:
+        """
+        将HTML中的图片相对路径转换为绝对URL
+
+        Args:
+            html: HTML内容
+            base_url: 基础URL
+
+        Returns:
+            处理后的HTML
+        """
+        from urllib.parse import urljoin
+
+        soup = BeautifulSoup(html, 'lxml')
+
+        # 处理所有 img 标签
+        for img in soup.find_all('img'):
+            src = img.get('src')
+            if src:
+                # 将相对路径转换为绝对URL
+                absolute_url = urljoin(base_url, src)
+                img['src'] = absolute_url
+                logger.debug(f"Converted image URL: {src} -> {absolute_url}")
+
+        return str(soup)
 
     def _preprocess_code_blocks(self, html: str) -> str:
         """
@@ -377,18 +583,18 @@ class ArticleScraper:
         Returns:
             文章数据字典
         """
-        # 1. 抓取HTML
-        html = self.fetch_url(url)
+        # 1. 抓取HTML，获取实际的base_url（可能是iframe的URL）
+        html, actual_base_url = self.fetch_url(url)
 
         # 2. 提取文章内容
-        article = self.extract_article(html, base_url=url)
+        article = self.extract_article(html, base_url=actual_base_url)
 
-        # 3. 转换为Markdown
-        content_markdown = self.convert_to_markdown(article['content_html'])
+        # 3. 转换为Markdown（使用实际的base_url转换图片相对路径）
+        content_markdown = self.convert_to_markdown(article['content_html'], base_url=actual_base_url)
         article['content_markdown'] = content_markdown
 
-        # 4. 提取图片
-        image_urls = self.extract_images(article['content_html'], base_url=url)
+        # 4. 提取图片（使用实际的base_url）
+        image_urls = self.extract_images(article['content_html'], base_url=actual_base_url)
         article['image_urls'] = image_urls
 
         return article
@@ -458,7 +664,7 @@ class ArticleScraper:
             'avatar',  # 头像(可选)
             'gravatar',  # Gravatar头像
             'tracking',  # 跟踪像素
-            'ad.',  # 广告
+            '/ad.',  # 广告（路径中的ad.，避免误匹配bad.等）
             'advertisement',
             '.gif?',  # 跟踪GIF(通常很小)
         ]
